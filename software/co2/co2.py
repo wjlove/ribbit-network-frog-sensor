@@ -64,6 +64,9 @@ scd.self_calibration_enabled = True
 
 
 gps_valid = False
+latitude = None
+longitude = None
+altitude = None
 
 while True:
     if not gps_valid:
@@ -88,13 +91,17 @@ while True:
                 print("Error getting current GPS position: %s" % e)
                 continue
 
-            # Read GPS Data
-            # See https://github.com/Ribbit-Network/ribbit-network-frog-sensor/issues/41
-            # for more information about the rounding of the coordinates
-            gps_digits_precision = 2
-            latitude = round(packet.position()[0], gps_digits_precision)
-            longitude = round(packet.position()[1], gps_digits_precision)
-            altitude = packet.altitude()
+            try:
+                # Read GPS Data
+                # See https://github.com/Ribbit-Network/ribbit-network-frog-sensor/issues/41
+                # for more information about the rounding of the coordinates
+                gps_digits_precision = 2
+                latitude = round(packet.position()[0], gps_digits_precision)
+                longitude = round(packet.position()[1], gps_digits_precision)
+                altitude = packet.altitude()
+            except gpsd.NoFixError:
+                # No valid gps fix, use previous location if available
+                print("No GPS Fix. Using previous location.")
 
             # Set SCD Pressure from Barometer
             #
@@ -105,20 +112,21 @@ while True:
             if dps310.pressure > 0:
                 scd.ambient_pressure = dps310.pressure
 
-            # Publish to Influx DB Cloud
-            point = Point("ghg_point").tag("host", device_uuid) \
-                .field("co2", scd.CO2).time(datetime.utcnow(), WritePrecision.NS) \
-                .field("temperature", scd.temperature) \
-                .field("humidity", scd.relative_humidity) \
-                .field("lat", latitude) \
-                .field("lon", longitude) \
-                .field("alt", altitude) \
-                .field("baro_pressure", dps310.pressure) \
-                .field ("baro_temperature", dps310.temperature) \
-                .field("scd30_pressure_mbar", scd.ambient_pressure) \
-                .field("scd30_altitude_m", scd.altitude)
-            
-            write_api.write(bucket, org, point)
+            if latitude is not None:
+                # Publish to Influx DB Cloud
+                point = Point("ghg_point").tag("host", device_uuid) \
+                    .field("co2", scd.CO2).time(datetime.utcnow(), WritePrecision.NS) \
+                    .field("temperature", scd.temperature) \
+                    .field("humidity", scd.relative_humidity) \
+                    .field("lat", latitude) \
+                    .field("lon", longitude) \
+                    .field("alt", altitude) \
+                    .field("baro_pressure", dps310.pressure) \
+                    .field ("baro_temperature", dps310.temperature) \
+                    .field("scd30_pressure_mbar", scd.ambient_pressure) \
+                    .field("scd30_altitude_m", scd.altitude)
+                
+                write_api.write(bucket, org, point)
 
             # Publish to Local MQTT Broker
             data = {}
